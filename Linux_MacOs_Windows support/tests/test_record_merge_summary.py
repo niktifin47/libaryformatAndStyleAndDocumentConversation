@@ -62,6 +62,25 @@ def test_rejects_unmerged_pull_request():
         summary_script.summary(data)
 
 
+def test_linked_task_status_closes_only_safe_linked_tasks(monkeypatch):
+    calls = []
+
+    def fake_run(*args):
+        calls.append(args)
+        if args[:3] == ("gh", "pr", "view"):
+            return (
+                '{"closingIssuesReferences":[{"number":31,"state":"OPEN","labels":[]},'
+                '{"number":32,"state":"OPEN","labels":[{"name":"objective"}]},'
+                '{"number":33,"state":"OPEN","labels":[{"name":"roadmap"}]}]}'
+            )
+        return ""
+
+    monkeypatch.setattr(summary_script, "run", fake_run)
+    updated = summary_script.update_linked_task_status("owner/repo", 12)
+    assert updated == [31]
+    assert any(call[:4] == ("gh", "issue", "close", "31") for call in calls)
+
+
 def test_comment_retry_does_not_duplicate_bot_comment(monkeypatch):
     marker, _, body = summary_script.summary(event())
     calls = []
