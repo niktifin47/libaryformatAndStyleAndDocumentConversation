@@ -54,6 +54,50 @@ def summary(event: dict) -> tuple[str, str, str]:
     return marker, entry, body
 
 
+def linked_issues(repository: str, number: int) -> list[dict]:
+    result = json.loads(
+        run(
+            "gh",
+            "pr",
+            "view",
+            str(number),
+            "--repo",
+            repository,
+            "--json",
+            "closingIssuesReferences",
+        )
+    )
+    references = result.get("closingIssuesReferences", [])
+    return [item for item in references if isinstance(item, dict)]
+
+
+def update_linked_task_status(repository: str, number: int) -> list[int]:
+    updated: list[int] = []
+    for issue in linked_issues(repository, number):
+        issue_number = issue.get("number")
+        labels = {label.get("name") for label in issue.get("labels", []) if isinstance(label, dict)}
+        state = issue.get("state")
+        if (
+            not isinstance(issue_number, int)
+            or state == "CLOSED"
+            or "objective" in labels
+            or "roadmap" in labels
+        ):
+            continue
+        run(
+            "gh",
+            "issue",
+            "close",
+            str(issue_number),
+            "--repo",
+            repository,
+            "--comment",
+            f"Closed automatically because merged PR #{number} is linked to this task.",
+        )
+        updated.append(issue_number)
+    return updated
+
+
 def is_summary_pr(event: dict) -> bool:
     pr = event["pull_request"]
     head = pr["head"]
@@ -146,6 +190,11 @@ def main() -> None:
     marker, entry, body = summary(event)
     repository = event["repository"]["full_name"]
     number = event["pull_request"]["number"]
+    if not is_summary_pr(event):
+        closed_issues = update_linked_task_status(repository, number)
+        if closed_issues:
+            issue_list = ", ".join(f"#{item}" for item in closed_issues)
+            body += f"\n- Linked task status updated: {issue_list} closed.\n"
     record_comment(repository, number, marker, body)
     if is_summary_pr(event):
         print("Automation-only summary PR: no further planning update proposed.")

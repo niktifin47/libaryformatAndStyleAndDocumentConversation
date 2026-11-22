@@ -1,0 +1,34 @@
+name: Automated progress check
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  classify-new-idea:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Add new idea to backlog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/add_new_issue_to_backlog.py
+
+  weekly-summary:
+    if: github.event_name != 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Generate weekly objective summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/check_project_progress.py
