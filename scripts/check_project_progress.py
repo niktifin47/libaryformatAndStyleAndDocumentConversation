@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 
 def run(*command: str) -> str:
@@ -59,7 +58,7 @@ def build_summary(repository: str, since: datetime) -> str:
     merged = get_recent_merged(repository, since)
     completed, task_total = get_task_counts(repository)
     objective_count = len(get_open_objectives(repository))
-    progress = round((completed / task_total * 100)) if task_total else 0
+    progress = round(completed / task_total * 100) if task_total else 0
 
     lines = [
         "## Automated progress summary",
@@ -79,8 +78,10 @@ def build_summary(repository: str, since: datetime) -> str:
     lines.extend(
         [
             "",
-            "This summary reports observed progress only. "
-            "Small changes do not alter milestones or roadmap structure.",
+            (
+                "This summary reports observed progress only. "
+                "Small changes do not alter milestones or roadmap structure."
+            ),
             "",
             "Roadmap or milestone changes require personal approval.",
         ]

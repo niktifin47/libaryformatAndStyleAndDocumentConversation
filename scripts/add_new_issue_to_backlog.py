@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+from pathlib import Path
 
 
 def run(*command: str) -> str:
@@ -12,7 +13,7 @@ def run(*command: str) -> str:
 
 
 def main() -> None:
-    event = json.loads(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8").read())
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
     issue = event["issue"]
     repository = event["repository"]["full_name"]
     number = issue["number"]
