@@ -737,7 +737,7 @@ ${output.joinToString("\n")}
         ZipOutputStream(output).use { zip ->
             zipEntry(zip, "[Content_Types].xml", contentTypesXml)
             zipEntry(zip, "_rels/.rels", rootRelationshipsXml)
-            zipEntry(zip, "word/document.xml", documentXml(document))
+            zipEntry(zip, "word/document.xml", documentXml(document, style))
             zipEntry(zip, "word/styles.xml", stylesXml(style))
             zipEntry(zip, "word/numbering.xml", numberingXml)
             zipEntry(zip, "word/_rels/document.xml.rels", documentRelationshipsXml)
@@ -745,7 +745,7 @@ ${output.joinToString("\n")}
         return output.toByteArray()
     }
 
-    private fun documentXml(document: List<DocumentBlock>): String {
+    private fun documentXml(document: List<DocumentBlock>, style: DocumentStyle): String {
         val paragraphs = document.joinToString("") { block ->
             val properties = when {
                 block.kind.startsWith("heading") ->
@@ -757,10 +757,18 @@ ${output.joinToString("\n")}
                 }
                 else -> ""
             }
-            "<w:p>$properties<w:r><w:t xml:space=\"preserve\">${xmlEscape(block.text)}</w:t></w:r></w:p>"
+            val runs = strongSpans(block.text).joinToString("") { span ->
+                val runStyle = if (span.strong) {
+                    """<w:rPr><w:b/><w:color w:val="${style.colors.accent.removePrefix("#").uppercase(Locale.ROOT)}"/></w:rPr>"""
+                } else ""
+                """<w:r>$runStyle<w:t xml:space="preserve">${xmlEscape(span.text)}</w:t></w:r>"""
+            }
+            "<w:p>$properties$runs</w:p>"
         }
+        val background = if (style.colors.background.equals("#ffffff", ignoreCase = true)) "" else
+            """<w:background w:color="${style.colors.background.removePrefix("#").uppercase(Locale.ROOT)}"/>"""
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="$WORD_NAMESPACE"><w:body>$paragraphs
+<w:document xmlns:w="$WORD_NAMESPACE">$background<w:body>$paragraphs
 <w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/></w:sectPr>
 </w:body></w:document>"""
     }
@@ -872,12 +880,25 @@ $headings
             var y = page.mediaBox.height - 54f
             var orderedNumber = 0
 
+            fun drawBackground() {
+                if (!style.colors.background.equals("#ffffff", ignoreCase = true)) {
+                    val rgb = style.colors.background.removePrefix("#").chunked(2).map { it.toInt(16) / 255f }
+                    stream.saveGraphicsState()
+                    stream.setNonStrokingColor(PDColor(rgb.toFloatArray(), PDDeviceRGB.INSTANCE))
+                    stream.addRect(0f, 0f, page.mediaBox.width, page.mediaBox.height)
+                    stream.fill()
+                    stream.restoreGraphicsState()
+                }
+            }
+            drawBackground()
+
             fun nextPage() {
                 stream.close()
                 page = PDPage(PDRectangle.LETTER)
                 pdf.addPage(page)
                 stream = PDPageContentStream(pdf, page)
                 y = page.mediaBox.height - 54f
+                drawBackground()
             }
 
             for (block in document) {
@@ -897,7 +918,17 @@ $headings
                     style.template.fontSizePt
                 }
                 val color = if (isHeading) style.colors.heading else style.colors.text
-                val rgb = color.removePrefix("#").chunked(2).map { it.toInt(16) }
+                fun pdfColor(hex: String) = PDColor(
+                    hex.removePrefix("#").chunked(2).map { it.toInt(16) / 255f }.toFloatArray(),
+                    PDDeviceRGB.INSTANCE,
+                )
+                val normalColor = pdfColor(color)
+                val accentColor = pdfColor(style.colors.accent)
+                val boldFont = if (style.template.fontFamily.contains("times", ignoreCase = true)) {
+                    PDType1Font.TIMES_BOLD
+                } else {
+                    PDType1Font.HELVETICA_BOLD
+                }
                 val prefix = when (block.kind) {
                     "list_item" -> {
                         orderedNumber = 0
@@ -909,17 +940,23 @@ $headings
                         ""
                     }
                 }
-                val lines = wrapText(prefix + block.text, font, size, page.mediaBox.width - 108f)
+                val spans = strongSpans(prefix + block.text)
+                val lines = if (spans.any { it.strong }) {
+                    wrapStyledText(spans, font, boldFont, size, page.mediaBox.width - 108f)
+                } else {
+                    wrapText(prefix + block.text, font, size, page.mediaBox.width - 108f)
+                        .map { listOf(InlineSpan(it, false)) }
+                }
                 for (line in lines) {
                     val lineHeight = size * 1.4f
                     if (y - lineHeight < 54f) nextPage()
                     stream.beginText()
-                    stream.setFont(font, size)
-                    stream.setNonStrokingColor(
-                        PDColor(rgb.map { it / 255f }.toFloatArray(), PDDeviceRGB.INSTANCE),
-                    )
                     stream.newLineAtOffset(54f, y)
-                    stream.showText(line)
+                    for (span in line) {
+                        stream.setFont(if (span.strong) boldFont else font, size)
+                        stream.setNonStrokingColor(if (span.strong) accentColor else normalColor)
+                        stream.showText(span.text)
+                    }
                     stream.endText()
                     y -= lineHeight
                 }
@@ -929,6 +966,95 @@ $headings
             pdf.save(output)
         }
         return output.toByteArray()
+    }
+
+    private data class InlineSpan(val text: String, val strong: Boolean)
+
+    private fun strongSpans(text: String): List<InlineSpan> {
+        val spans = mutableListOf<InlineSpan>()
+        var position = 0
+        while (position < text.length) {
+            val start = text.indexOf("**", position)
+            if (start < 0) {
+                spans += InlineSpan(text.substring(position), false)
+                break
+            }
+            val end = text.indexOf("**", start + 3)
+            val newline = text.substring(start + 2, if (end < 0) text.length else end).indexOf('\n')
+            if (newline >= 0) {
+                val next = start + 3 + newline
+                spans += InlineSpan(text.substring(position, next), false)
+                position = next
+            } else if (end < 0) {
+                spans += InlineSpan(text.substring(position), false)
+                break
+            } else {
+                if (start > position) spans += InlineSpan(text.substring(position, start), false)
+                spans += InlineSpan(text.substring(start + 2, end), true)
+                position = end + 2
+            }
+        }
+        return spans
+    }
+
+    private fun wrapStyledText(
+        spans: List<InlineSpan>,
+        normal: PDType1Font,
+        bold: PDType1Font,
+        size: Float,
+        maxWidth: Float,
+    ): List<List<InlineSpan>> {
+        val words = mutableListOf<List<InlineSpan>>()
+        var word = mutableListOf<InlineSpan>()
+        val part = StringBuilder()
+        var partStrong = false
+        fun flushPart() {
+            if (part.isNotEmpty()) {
+                word += InlineSpan(part.toString(), partStrong)
+                part.setLength(0)
+            }
+        }
+        fun flushWord() {
+            flushPart()
+            if (word.isNotEmpty()) {
+                words += word
+                word = mutableListOf()
+            }
+        }
+        for (span in spans) {
+            for (character in span.text) {
+                if (character.isWhitespace()) {
+                    flushWord()
+                } else {
+                    if (part.isNotEmpty() && partStrong != span.strong) flushPart()
+                    partStrong = span.strong
+                    part.append(character)
+                }
+            }
+        }
+        flushWord()
+        val lines = mutableListOf<List<InlineSpan>>()
+        var line = mutableListOf<InlineSpan>()
+        var width = 0f
+        val spaceWidth = normal.getStringWidth(" ") * size / 1000f
+        for (parts in words) {
+            val wordWidth = parts.sumOf {
+                (if (it.strong) bold else normal).getStringWidth(it.text).toDouble()
+            }.toFloat() * size / 1000f
+            if (line.isNotEmpty() && width + spaceWidth + wordWidth > maxWidth) {
+                lines += line
+                line = mutableListOf()
+                width = 0f
+            }
+            if (line.isNotEmpty()) {
+                line += InlineSpan(" ", false)
+                width += spaceWidth
+            }
+            line.addAll(parts)
+            width += wordWidth
+        }
+        if (line.isNotEmpty()) lines += line
+        return lines.ifEmpty { listOf(listOf(InlineSpan("", false))) }
     }
 
     private fun wrapText(text: String, font: PDType1Font, size: Float, maxWidth: Float): List<String> {

@@ -1,3 +1,6 @@
 include LICENSE README.md
 include scripts/create_winget_manifests.py
+# These tests depend on repository-level scripts or shared fixtures.
 exclude tests/test_record_merge_summary.py
+exclude tests/test_color.py
+exclude tests/test_coverage_gate.py

@@ -1,6 +1,9 @@
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
+    jacoco
 }
 
 android {
@@ -20,13 +23,29 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
+
+    sourceSets.getByName("test").resources.srcDir(rootProject.file("../test-fixtures"))
+
+    buildTypes {
+        getByName("debug") {
+            enableUnitTestCoverage = true
+        }
+    }
 }
 
 kotlin {
     jvmToolchain(17)
 }
 
+jacoco {
+    toolVersion = "0.8.12"
+}
+
 tasks.withType<Test>().configureEach {
+    extensions.configure<JacocoTaskExtension> {
+        isIncludeNoLocationClasses = true
+        excludes = listOf("jdk.internal.*")
+    }
     testLogging {
         events("failed", "skipped")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

@@ -10,6 +10,7 @@ from typing import BinaryIO
 from xml.sax.saxutils import escape
 from zipfile import BadZipFile
 
+from .color import OklchPalette
 from .errors import DocumentParseError, ResourceLimitError
 from .models import (
     COLOR_SCHEMES,
@@ -64,7 +65,7 @@ def get_format_capabilities() -> Mapping[str, FormatCapability]:
 
 def _resolve_template(
     preset: str | Template,
-    color_scheme: str | ColorScheme | None,
+    color_scheme: str | ColorScheme | OklchPalette | None,
     font_family: str | None = None,
 ) -> tuple[Template, ColorScheme]:
     if isinstance(preset, Template):
@@ -91,7 +92,9 @@ def _resolve_template(
     ):
         raise ValueError("Font sizes must be positive finite numbers.")
 
-    if isinstance(color_scheme, ColorScheme):
+    if isinstance(color_scheme, OklchPalette):
+        colors = color_scheme.to_color_scheme()
+    elif isinstance(color_scheme, ColorScheme):
         colors = color_scheme
     else:
         scheme_name = color_scheme or template.color_scheme
@@ -435,11 +438,37 @@ def _render_markdown(document: Document) -> str:
     return "\n".join(output).rstrip() + ("\n" if output else "")
 
 
+def _strong_spans(text: str) -> list[tuple[str, bool]]:
+    spans = []
+    position = 0
+    while position < len(text):
+        start = text.find("**", position)
+        if start < 0:
+            spans.append((text[position:], False))
+            break
+        end = text.find("**", start + 3)
+        newline = text.find("\n", start + 2, end if end >= 0 else len(text))
+        if newline >= 0:
+            spans.append((text[position : newline + 1], False))
+            position = newline + 1
+        elif end < 0:
+            spans.append((text[position:], False))
+            break
+        else:
+            if start > position:
+                spans.append((text[position:start], False))
+            spans.append((text[start + 2 : end], True))
+            position = end + 2
+    return spans
+
+
 def _render_docx(
     document: Document, template: Template, colors: ColorScheme, output_path: Path | BinaryIO
 ) -> None:
     try:
         from docx import Document as WordDocument
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
         from docx.shared import Inches, Pt, RGBColor
     except ImportError as error:
         raise ImportError(
@@ -447,6 +476,10 @@ def _render_docx(
         ) from error
 
     word_document = WordDocument()
+    if colors.background.lower() != "#ffffff":
+        background = OxmlElement("w:background")
+        background.set(qn("w:color"), colors.background[1:].upper())
+        word_document._element.insert(0, background)
     section = word_document.sections[0]
     section.top_margin = Inches(0.75)
     section.bottom_margin = Inches(0.75)
@@ -464,14 +497,19 @@ def _render_docx(
 
     for block in document.blocks:
         if block.kind == "list_item":
-            word_document.add_paragraph(block.text, style="List Bullet")
+            paragraph = word_document.add_paragraph(style="List Bullet")
         elif block.kind == "ordered_item":
-            word_document.add_paragraph(block.text, style="List Number")
+            paragraph = word_document.add_paragraph(style="List Number")
         elif block.kind.startswith("heading"):
             level = min(int(block.kind.removeprefix("heading")), 6)
-            word_document.add_paragraph(block.text, style=f"Heading {level}")
+            paragraph = word_document.add_paragraph(style=f"Heading {level}")
         else:
-            word_document.add_paragraph(block.text)
+            paragraph = word_document.add_paragraph()
+        for text, strong in _strong_spans(block.text):
+            run = paragraph.add_run(text)
+            if strong:
+                run.bold = True
+                run.font.color.rgb = RGBColor.from_string(colors.accent[1:])
     word_document.save(output_path)
 
 
@@ -503,6 +541,13 @@ def _render_pdf(
     )
     story = []
     ordered_number = 0
+    def pdf_markup(text: str) -> str:
+        return "".join(
+            f'<font color="{colors.accent}"><b>{escape(part)}</b></font>'
+            if strong else escape(part)
+            for part, strong in _strong_spans(text)
+        )
+
     for block in document.blocks:
         if block.kind.startswith("heading"):
             ordered_number = 0
@@ -516,7 +561,7 @@ def _render_pdf(
                 spaceBefore=10,
                 spaceAfter=6,
             )
-            story.append(Paragraph(escape(block.text), heading_style))
+            story.append(Paragraph(pdf_markup(block.text), heading_style))
         elif block.kind in {"list_item", "ordered_item"}:
             if block.kind == "ordered_item":
                 ordered_number += 1
@@ -524,21 +569,32 @@ def _render_pdf(
             else:
                 ordered_number = 0
                 marker = "&bull;"
-            story.append(Paragraph(f"{marker} {escape(block.text)}", body_style))
+            story.append(Paragraph(f"{marker} {pdf_markup(block.text)}", body_style))
             story.append(Spacer(1, 3))
         else:
             ordered_number = 0
-            story.append(Paragraph(escape(block.text), body_style))
+            story.append(Paragraph(pdf_markup(block.text), body_style))
             story.append(Spacer(1, 6))
     target = str(output_path) if isinstance(output_path, Path) else output_path
-    SimpleDocTemplate(target, pagesize=LETTER).build(story)
+    if colors.background.lower() == "#ffffff":
+        SimpleDocTemplate(target, pagesize=LETTER).build(story)
+    else:
+        def draw_background(canvas, document):
+            canvas.saveState()
+            canvas.setFillColor(pdf_colors.HexColor(colors.background))
+            canvas.rect(0, 0, *document.pagesize, fill=1, stroke=0)
+            canvas.restoreState()
+
+        SimpleDocTemplate(target, pagesize=LETTER).build(
+            story, onFirstPage=draw_background, onLaterPages=draw_background
+        )
 
 
 def render_document(
     document: Document,
     output_format: str,
     preset: str | Template = "formal",
-    color_scheme: str | ColorScheme | None = None,
+    color_scheme: str | ColorScheme | OklchPalette | None = None,
     font_family: str | None = None,
 ) -> str | None:
     """Render a document as text/HTML, or return None for file-based formats."""
@@ -561,7 +617,7 @@ def format_content(
     input_format: str,
     output_format: str,
     preset: str | Template = "formal",
-    color_scheme: str | ColorScheme | None = None,
+    color_scheme: str | ColorScheme | OklchPalette | None = None,
     font_family: str | None = None,
     remove_hidden_characters: bool = False,
     resource_limits: ResourceLimits | None = None,
@@ -612,7 +668,7 @@ def format_file(
     input_path: str | Path,
     output_path: str | Path,
     preset: str | Template = "formal",
-    color_scheme: str | ColorScheme | None = None,
+    color_scheme: str | ColorScheme | OklchPalette | None = None,
     font_family: str | None = None,
     remove_hidden_characters: bool = False,
     resource_limits: ResourceLimits | None = None,

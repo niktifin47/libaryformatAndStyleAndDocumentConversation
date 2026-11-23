@@ -38,7 +38,7 @@ all = [
     "striprtf>=0.0.26",
     "odfpy>=1.4.1",
 ]
-dev = ["pytest>=8", "ruff>=0.6", "build>=1"]
+dev = ["pytest>=8", "ruff>=0.6", "build>=1", "coverage==7.17.4; python_version >= '3.11'"]
 windows = ["pyinstaller>=6"]
 
 [project.urls]
@@ -61,6 +61,11 @@ addopts = "-ra --tb=long --durations=10 --strict-config --strict-markers --junit
 verbosity_assertions = 2
 junit_logging = "all"
 junit_log_passing_tests = false
+
+[tool.coverage.run]
+branch = true
+source = ["src", "scripts", "../scripts"]
+patch = ["subprocess"]
 
 [tool.ruff]
 line-length = 100

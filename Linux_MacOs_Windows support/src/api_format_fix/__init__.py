@@ -1,5 +1,6 @@
 __version__ = "0.1.2"
 
+from .color import OklchColor, OklchPalette
 from .errors import DocumentParseError, ResourceLimitError
 from .models import (
     COLOR_SCHEMES,
@@ -40,6 +41,8 @@ __all__ = [
     "DocumentParseError",
     "FormatCapability",
     "HiddenCharacterFinding",
+    "OklchColor",
+    "OklchPalette",
     "ResourceLimitError",
     "ResourceLimits",
     "Template",

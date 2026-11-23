@@ -65,6 +65,36 @@ jobs:
           path: reports/
           retention-days: 14
 
+  coverage-python:
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: Linux_MacOs_Windows support/pyproject.toml
+      - name: Install dependencies
+        run: python -m pip install -e "./Linux_MacOs_Windows support[all,dev]"
+      - name: Measure and verify Python coverage
+        run: |
+          mkdir -p reports/python-coverage
+          cd "Linux_MacOs_Windows support"
+          python -m coverage erase
+          python -m coverage run -m pytest --junitxml=../reports/python-coverage/pytest.xml 2>&1 | tee ../reports/python-coverage/pytest.log
+          python -m coverage json -o ../reports/python-coverage/coverage.json
+          python -m coverage report -m 2>&1 | tee ../reports/python-coverage/coverage.log
+          python ../scripts/check_coverage.py python ../reports/python-coverage/coverage.json
+      - name: Upload Python coverage diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-reports
+          path: reports/python-coverage/
+          retention-days: 14
+
   test:
     needs: changes
     if: ${{ needs.changes.outputs.python == 'true' }}
@@ -240,8 +270,10 @@ jobs:
       - name: Test, build, and lint Android
         run: |
           cd "mobile development support"
-          bash ./gradlew :android:testDebugUnitTest :android:assembleDebug :android:lintDebug \
+          bash ./gradlew :android:testDebugUnitTest :android:assembleDebug :android:lintDebug :android:createDebugUnitTestCoverageReport \
             --no-daemon --build-cache --continue --stacktrace --console=plain 2>&1 | tee ../reports/gradle.log
+      - name: Verify Android coverage
+        run: python3 scripts/check_coverage.py android "mobile development support/android/build/reports/coverage/test/debug/report.xml"
       - name: Upload Android diagnostics
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -299,10 +331,43 @@ jobs:
           path: npm package/reports/
           retention-days: 14
 
+  coverage-node:
+    needs: changes
+    if: ${{ needs.changes.outputs.npm == 'true' }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: npm package
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.18.0"
+          cache: npm
+          cache-dependency-path: npm package/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: npm ci
+      - name: Measure and verify Node coverage
+        run: |
+          mkdir -p reports
+          npm run coverage 2>&1 | tee reports/coverage.log
+          python ../scripts/check_coverage.py node reports/coverage/coverage-summary.json
+      - name: Upload Node coverage diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-coverage-reports
+          path: npm package/reports/
+          retention-days: 14
+
   ci-status:
     name: CI
     if: ${{ always() }}
-    needs: [changes, quality, test, test-macos, linux-distros, android, npm]
+    needs: [changes, quality, test, test-macos, linux-distros, android, npm, coverage-python, coverage-node]
     runs-on: ubuntu-latest
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
@@ -315,6 +380,8 @@ jobs:
       DISTRO_RESULT: ${{ needs.linux-distros.result }}
       ANDROID_RESULT: ${{ needs.android.result }}
       NPM_RESULT: ${{ needs.npm.result }}
+      PYTHON_COVERAGE_RESULT: ${{ needs.coverage-python.result }}
+      NODE_COVERAGE_RESULT: ${{ needs.coverage-node.result }}
     steps:
       - name: Verify CI jobs passed
         run: |
@@ -328,6 +395,8 @@ jobs:
             echo "| Linux distributions | $DISTRO_RESULT |"
             echo "| Android | $ANDROID_RESULT |"
             echo "| npm (Node 22 and 24) | $NPM_RESULT |"
+            echo "| Python coverage | $PYTHON_COVERAGE_RESULT |"
+            echo "| Node coverage | $NODE_COVERAGE_RESULT |"
             echo
             echo "Download the reports artifact for the original failing job: logs, runtime/dependency versions, and test reports."
             echo 'Run the affected platform checks from its project folder; see CONTRIBUTING.md.'
@@ -345,6 +414,8 @@ jobs:
           check "$PYTHON_CHANGED" "$TEST_RESULT" &&
           check "$PYTHON_CHANGED" "$MACOS_RESULT" &&
           check "$PYTHON_CHANGED" "$DISTRO_RESULT" &&
+          check "$PYTHON_CHANGED" "$PYTHON_COVERAGE_RESULT" &&
           check "$MOBILE_CHANGED" "$ANDROID_RESULT" &&
-          check "$NPM_CHANGED" "$NPM_RESULT"
+          check "$NPM_CHANGED" "$NPM_RESULT" &&
+          check "$NPM_CHANGED" "$NODE_COVERAGE_RESULT"
 

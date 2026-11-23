@@ -1,4 +1,5 @@
 import { InvalidOptionError } from "./errors.ts";
+import { OklchPalette } from "./color.ts";
 import { COLOR_SCHEMES, PRESETS } from "./models.ts";
 import type { ColorScheme, Template } from "./models.ts";
 
@@ -21,7 +22,7 @@ const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 /** Validate and combine a preset, color scheme, and font into concrete render settings. */
 export function resolveStyle(
   preset: string | Template = "formal",
-  colorScheme?: string | ColorScheme | null,
+  colorScheme?: string | ColorScheme | OklchPalette | null,
   fontFamily?: string | null,
 ): ResolvedStyle {
   let template: Template;
@@ -52,7 +53,9 @@ export function resolveStyle(
   }
 
   let scheme: ColorScheme;
-  if (colorScheme != null && typeof colorScheme === "object") {
+  if (colorScheme instanceof OklchPalette) {
+    scheme = colorScheme.toColorScheme();
+  } else if (colorScheme != null && typeof colorScheme === "object") {
     scheme = colorScheme;
   } else {
     const name = colorScheme || template.colorScheme;

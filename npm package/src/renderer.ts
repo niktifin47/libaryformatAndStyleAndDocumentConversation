@@ -15,6 +15,7 @@ import type {
   ResourceLimits,
   Template,
 } from "./models.ts";
+import type { OklchPalette } from "./color.ts";
 import { parseHtml, parseMarkdown, parseRst, parseTex } from "./parser.ts";
 import {
   inspectDocument,
@@ -30,7 +31,7 @@ export interface StyleOptions {
   /** A built-in preset name or a custom template. Defaults to `formal`. */
   readonly preset?: string | Template;
   /** A built-in color scheme name or a custom scheme. Defaults to the preset's scheme. */
-  readonly colorScheme?: string | ColorScheme | null;
+  readonly colorScheme?: string | ColorScheme | OklchPalette | null;
   readonly fontFamily?: string | null;
 }
 
