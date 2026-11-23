@@ -86,6 +86,35 @@ const pdf = await formatContent(bytes, ".docx", ".pdf", {
 
 Built-in color schemes are `navy`, `teal`, and 100 generated palettes, `spectrum-001` through `spectrum-100`, identical to the Python package. The library does not bundle font files; font availability depends on the machine opening the output. PDF output uses PDF's built-in Helvetica or Times fonts, so other font names are not embedded, and characters outside Windows-1252 (such as Cyrillic, CJK, and emoji) are written as `?`.
 
+### OKLCH palettes
+
+```ts
+import { OklchColor, OklchPalette, formatContent } from "@niktifin47/api-format-fix";
+
+const ink = new OklchColor(0.25, 0.02, 250);
+const teal = new OklchColor(0.7, 0.1, 180);
+const palette = new OklchPalette("custom", ink, teal, teal);
+const modified = palette.withChanges({ heading: new OklchColor(0.5, 0.1, 30) });
+const harmonized = modified.harmonize(30, 0.5);
+const html = await formatContent("# Hello", ".md", ".html", { colorScheme: harmonized });
+const srgb = palette.toColorScheme(); // does not change palette
+```
+
+Lightness is in `[0, 1]`, chroma is nonnegative, and hue is a finite number
+of degrees. Out-of-gamut colors are mapped to sRGB by reducing chroma at fixed
+lightness and hue. Original values remain in the palette, not in the output.
+`harmonize(referenceHue, strength)` returns a new palette with chromatic roles
+moved toward the reference by a fraction in `[0, 1]` along the shortest hue arc;
+opposite hues move clockwise. Neutral colors, lightness, and chroma are preserved.
+HTML uses all palette roles; DOCX and PDF use text, heading, accent, and background.
+Non-white DOCX/PDF backgrounds now apply by default, including for existing
+hex schemes. DOCX viewers may not display or print background colors. Markdown
+and CV remain unstyled. DOCX/PDF now render nonempty single-line `**strong**`
+spans as bold accent-colored text instead of retaining the delimiters; unmatched
+delimiters remain literal. Check contrast after harmonization and mapping;
+alpha and ICC profiles are not supported. The CLI
+continues to accept named schemes only.
+
 ### Errors
 
 All library errors extend `ApiFormatFixError`: `DocumentParseError` (malformed or encrypted input), `ResourceLimitError`, `UnsupportedFormatError`, `InvalidOptionError`, and `MissingDependencyError`. Passing the wrong input type throws a `TypeError`.

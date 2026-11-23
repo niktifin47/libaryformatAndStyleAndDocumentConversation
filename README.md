@@ -204,6 +204,78 @@ Built-in presets:
 
 Built-in color schemes include `navy`, `teal`, and 100 distinct generated palettes, `spectrum-001` through `spectrum-100`. In Python, `format_file` also accepts custom `Template` and `ColorScheme` objects. Use `font_family` in Python or `--font-family` in the CLI to choose among the supported font-family names. Twenty-one additional freely licensed font family names are provided: Alegreya, Atkinson Hyperlegible, Carlito, DejaVu Sans, Fira Sans, IBM Plex Sans, Inter, Lato, Liberation Sans, Merriweather, Montserrat, Noto Sans, Noto Serif, Nunito, Open Sans, PT Sans, Poppins, Roboto, Source Sans 3, Source Serif 4, and Ubuntu. Arial and Times New Roman remain available for compatibility. The library does not bundle font files; font availability depends on the target system. PDF output uses ReportLab's built-in Helvetica or Times family, so other selected font names do not embed or provide fonts for PDF output.
 
+### OKLCH palettes
+
+Python, Node, and Android also provide immutable `OklchColor` and `OklchPalette`
+values. Create and change the source palette without losing its OKLCH components;
+export derives a separate six-digit sRGB color scheme. Existing hex schemes,
+named presets, and CLI options continue to work unchanged. The CLI accepts
+registered scheme names, not custom OKLCH values.
+
+```python
+from dataclasses import replace
+from api_format_fix import OklchColor, OklchPalette, format_content
+
+ink = OklchColor(0.25, 0.02, 250)
+teal = OklchColor(0.7, 0.1, 180)
+palette = OklchPalette("custom", text=ink, heading=teal, accent=teal)
+modified = replace(palette, heading=OklchColor(0.5, 0.1, 30))
+harmonized = modified.harmonize(reference_hue=30, strength=0.5)
+html = format_content("# Hello", ".md", ".html", color_scheme=harmonized)
+assert palette.heading == teal  # the source remains OKLCH
+```
+
+In Kotlin, convert a copy to an sRGB snapshot for the existing custom-template
+formatting overload:
+
+```kotlin
+val ink = OklchColor(0.25, 0.02, 250.0)
+val teal = OklchColor(0.7, 0.1, 180.0)
+val palette = OklchPalette("custom", ink, teal, teal)
+val modified = palette.copy(heading = OklchColor(0.5, 0.1, 30.0))
+val harmonized = modified.harmonize(referenceHue = 30.0, strength = 0.5)
+val template = FormatTemplate("custom", "Arial", 11f, 16f, "custom")
+val html = ApiFormatFix.formatText("# Hello", "md", "html", template, harmonized.toColorScheme())
+check(palette.heading == teal)
+```
+
+Node accepts `OklchPalette` directly; see its
+[example](npm%20package/README.md#oklch-palettes).
+
+Lightness must be finite and in `[0, 1]`, chroma finite and nonnegative, and hue
+finite in degrees. Hue is normalized on export, not in the stored value. The
+converter uses OKLab/D65 and the [CSS Color 4 sRGB transfer functions](https://www.w3.org/TR/css-color-4/).
+For out-of-gamut colors it holds lightness and hue fixed, caps the search range
+at chroma 4, and bisects chroma 32 times. Linear sRGB channels within `1e-7`
+of the gamut are treated as in gamut, then clamped and rounded to the nearest
+8-bit value with halves rounded upward. Alpha and ICC color profiles are not
+supported. Export does not embed the original OKLCH data: keep the source
+palette if it will be edited again. Custom sRGB schemes and caller-owned format
+or conversion adapters remain available.
+
+`harmonize(reference_hue, strength)` returns a new palette, moving every
+chromatic role along the shortest hue arc toward the reference by a fraction
+in `[0, 1]`. An exactly opposite hue moves clockwise. Lightness, chroma and
+neutral colors remain unchanged; zero strength is a no-op. Check contrast again
+after harmonization and export.
+
+| Output | Palette roles |
+| --- | --- |
+| HTML | text, heading, accent for strong text, background |
+| DOCX/PDF | text, heading, accent for strong text, page background |
+| Markdown/CV | plain text; no palette styling |
+
+DOCX and PDF now apply non-white backgrounds by default; this can change the
+appearance of documents created with existing custom hex schemes. White keeps
+the previous appearance. DOCX viewers may not display or print document
+backgrounds unless their settings allow it. Nonempty single-line `**strong**`
+spans in headings, paragraphs, and lists are rendered as bold accent-colored
+text in DOCX/PDF; unmatched delimiters remain literal. This changes previous
+DOCX/PDF output, which retained the `**` markers literally. Markdown/CV output
+is unchanged. Check text/background contrast
+after gamut conversion; custom palettes are not automatically accessibility
+validated. ODT remains input-only where supported; PPTX and XLSX are unsupported.
+
 ## Unicode inspection and safety limits
 
 Extracted text is scanned for Unicode control/format characters that can be invisible, including bidirectional controls, zero-width spaces, and unusual Unicode whitespace. Findings are reported as Python `UserWarning`s and are available through `inspect_document` / `inspect_file`. The CLI asks before cleanup interactively; use `--remove-hidden-characters` for an explicit non-interactive opt-in. Cleanup preserves the zero-width joiner used in emoji sequences, removes flagged controls, and normalizes unusual whitespace to a standard space. No content is modified by default.

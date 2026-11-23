@@ -35,3 +35,4 @@ export type {
 export { inspectDocument, removeSuspiciousCharacters } from "./security.ts";
 export type { HiddenCharacterFinding } from "./security.ts";
 export { VERSION } from "./version.ts";
+export { OklchColor, OklchPalette } from "./color.ts";

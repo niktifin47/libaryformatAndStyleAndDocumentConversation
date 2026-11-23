@@ -3,6 +3,7 @@ import { strToU8, zipSync } from "fflate";
 import type { Document } from "../models.ts";
 import { headingSizePt } from "../style.ts";
 import type { ResolvedStyle } from "../style.ts";
+import { strongSpans } from "./inline.ts";
 
 const WORD = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const PACKAGE_RELS = "http://schemas.openxmlformats.org/package/2006/relationships";
@@ -26,14 +27,17 @@ function escapeXml(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function runs(text: string): string {
-  let content = "";
-  for (const part of text.split(/(\r\n|\r|\n|\t)/)) {
-    if (part === "\t") content += "<w:tab/>";
-    else if (part === "\n" || part === "\r" || part === "\r\n") content += "<w:br/>";
-    else if (part) content += `<w:t xml:space="preserve">${escapeXml(part)}</w:t>`;
-  }
-  return `<w:r>${content}</w:r>`;
+function runs(text: string, accent: string): string {
+  return strongSpans(text).map((span) => {
+    let content = "";
+    for (const part of span.text.split(/(\r\n|\r|\n|\t)/)) {
+      if (part === "\t") content += "<w:tab/>";
+      else if (part === "\n" || part === "\r" || part === "\r\n") content += "<w:br/>";
+      else if (part) content += `<w:t xml:space="preserve">${escapeXml(part)}</w:t>`;
+    }
+    const properties = span.strong ? `<w:rPr><w:b/><w:color w:val="${hex(accent)}"/></w:rPr>` : "";
+    return `<w:r>${properties}${content}</w:r>`;
+  }).join("") || "<w:r></w:r>";
 }
 
 const hex = (color: string): string => color.slice(1).toUpperCase();
@@ -93,10 +97,10 @@ function numberingXml(orderedLists: number): string {
   );
 }
 
-function listParagraph(style: string, numId: number, text: string): string {
+function listParagraph(style: string, numId: number, text: string, accent: string): string {
   return (
     `<w:p><w:pPr><w:pStyle w:val="${style}"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${numId}"/></w:numPr></w:pPr>` +
-    `${runs(text)}</w:p>`
+    `${runs(text, accent)}</w:p>`
   );
 }
 
@@ -109,22 +113,25 @@ export function renderDocx(document: Document, style: ResolvedStyle): Uint8Array
     if (block.kind === "ordered_item") {
       if (!inOrderedList) orderedLists++;
       inOrderedList = true;
-      body.push(listParagraph("ListNumber", orderedLists + 1, block.text));
+      body.push(listParagraph("ListNumber", orderedLists + 1, block.text, style.colors.accent));
       continue;
     }
     inOrderedList = false;
     if (block.kind === "list_item") {
-      body.push(listParagraph("ListBullet", 1, block.text));
+      body.push(listParagraph("ListBullet", 1, block.text, style.colors.accent));
     } else if (block.kind.startsWith("heading")) {
       const level = Math.min(Number(block.kind.slice("heading".length)), 6);
-      body.push(`<w:p><w:pPr><w:pStyle w:val="Heading${level}"/></w:pPr>${runs(block.text)}</w:p>`);
+      body.push(`<w:p><w:pPr><w:pStyle w:val="Heading${level}"/></w:pPr>${runs(block.text, style.colors.accent)}</w:p>`);
     } else {
-      body.push(`<w:p>${runs(block.text)}</w:p>`);
+      body.push(`<w:p>${runs(block.text, style.colors.accent)}</w:p>`);
     }
   }
 
+  const background = style.colors.background.toLowerCase() === "#ffffff"
+    ? ""
+    : `<w:background w:color="${hex(style.colors.background)}"/>`;
   const documentXml =
-    `${XML_HEADER}<w:document xmlns:w="${WORD}"><w:body>${body.join("")}` +
+    `${XML_HEADER}<w:document xmlns:w="${WORD}">${background}<w:body>${body.join("")}` +
     `<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>` +
     `<w:pgMar w:top="1080" w:right="1800" w:bottom="1080" w:left="1800" w:header="720" w:footer="720" w:gutter="0"/>` +
     `</w:sectPr></w:body></w:document>`;

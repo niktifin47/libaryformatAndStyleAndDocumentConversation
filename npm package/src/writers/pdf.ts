@@ -2,6 +2,8 @@ import { importOptional } from "../optional.ts";
 import type { Document } from "../models.ts";
 import { headingSizePt } from "../style.ts";
 import type { ResolvedStyle } from "../style.ts";
+import { strongSpans } from "./inline.ts";
+import type { InlineSpan } from "./inline.ts";
 
 const PAGE_MARGIN = 72;
 // Code points above Latin-1 that Windows-1252 (the encoding of PDF's built-in fonts) can represent.
@@ -12,15 +14,28 @@ const WIN_ANSI_EXTRAS = new Set([
 ]);
 
 // PDF's built-in fonts cannot draw other characters, so they are replaced instead of drawn as garbage.
-function toBuiltInFontText(text: string): string {
-  let output = "";
-  for (const character of text.replace(/[\t\n\v\f\r ]+/g, " ").trim()) {
-    const codePoint = character.codePointAt(0) as number;
-    const drawable =
-      (codePoint >= 0x20 && codePoint <= 0x7e) ||
-      (codePoint >= 0xa0 && codePoint <= 0xff) ||
-      WIN_ANSI_EXTRAS.has(codePoint);
-    output += drawable ? character : "?";
+function toBuiltInFontSpans(text: string): InlineSpan[] {
+  const output: InlineSpan[] = [];
+  let pendingSpace = false;
+  let wroteText = false;
+  for (const span of strongSpans(text.trim())) {
+    let part = "";
+    for (const character of span.text) {
+      if (" \t\n\v\f\r".includes(character)) {
+        pendingSpace = true;
+        continue;
+      }
+      if (pendingSpace && wroteText) part += " ";
+      pendingSpace = false;
+      const codePoint = character.codePointAt(0) as number;
+      const drawable =
+        (codePoint >= 0x20 && codePoint <= 0x7e) ||
+        (codePoint >= 0xa0 && codePoint <= 0xff) ||
+        WIN_ANSI_EXTRAS.has(codePoint);
+      part += drawable ? character : "?";
+      wroteText = true;
+    }
+    if (part) output.push({ text: part, strong: span.strong });
   }
   return output;
 }
@@ -37,13 +52,21 @@ export async function renderPdf(document: Document, style: ResolvedStyle): Promi
   const bodyFont = serif ? "Times-Roman" : "Helvetica";
   const boldFont = serif ? "Times-Bold" : "Helvetica-Bold";
 
-  const pdf = new PDFDocument({ size: "LETTER", margin: PAGE_MARGIN });
+  const pdf = new PDFDocument({ size: "LETTER", margin: PAGE_MARGIN, autoFirstPage: false });
   const chunks: Buffer[] = [];
   const finished = new Promise<Uint8Array>((resolve, reject) => {
     pdf.on("data", (chunk: Buffer) => chunks.push(chunk));
     pdf.on("end", () => resolve(Buffer.concat(chunks)));
     pdf.on("error", reject);
   });
+  pdf.on("pageAdded", () => {
+    if (colors.background.toLowerCase() !== "#ffffff") {
+      pdf.save();
+      pdf.rect(0, 0, pdf.page.width, pdf.page.height).fill(colors.background);
+      pdf.restore();
+    }
+  });
+  pdf.addPage();
 
   const write = (
     text: string,
@@ -53,13 +76,14 @@ export async function renderPdf(document: Document, style: ResolvedStyle): Promi
     spaceBefore: number,
     spaceAfter: number,
   ): void => {
-    const content = toBuiltInFontText(text);
-    if (!content) return;
+    const spans = toBuiltInFontSpans(text);
+    if (spans.length === 0) return;
     pdf.font(font).fontSize(size);
     if (spaceBefore && pdf.y > pdf.page.margins.top) pdf.y += spaceBefore;
-    pdf.fillColor(color).text(content, {
-      align: "left",
-      lineGap: Math.max(0, size * 1.4 - pdf.currentLineHeight(true)),
+    const lineGap = Math.max(0, size * 1.4 - pdf.currentLineHeight(true));
+    spans.forEach((span, index) => {
+      pdf.font(span.strong ? boldFont : font).fillColor(span.strong ? colors.accent : color)
+        .text(span.text, { align: "left", lineGap, continued: index < spans.length - 1 });
     });
     pdf.y += spaceAfter;
   };

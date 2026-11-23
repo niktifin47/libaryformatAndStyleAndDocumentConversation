@@ -10,6 +10,44 @@
 
 Document input is untrusted. Keep output escaping and explicit optional-dependency errors intact.
 
+## Coverage checks
+
+The shared `test-fixtures/oklch.json` vectors trigger all three platform checks.
+Coverage includes Python library and repository scripts, TypeScript production
+source (including unloaded files), and Android production Kotlin classes.
+Generated files, dependencies, and tests are not included. Reports use
+different tools and denominators, so percentages must not be averaged.
+
+The baseline, measured on unchanged main `f97c11c` on Windows with Python
+3.14.7/coverage.py 7.17.4, Node 22.18.0/c8 9.1.0, and JDK 17/JaCoCo 0.8.12:
+
+| Platform | Lines covered / total | Branches covered / total |
+| --- | ---: | ---: |
+| Python | 752 / 870 | 214 / 278 |
+| Node | 2500 / 2565 | 674 / 740 |
+| Android | 510 / 603 | 221 / 330 |
+
+CI compares exact ratios without rounding down, and requires at least 90%
+branch coverage in each new color implementation. Missing or empty reports fail.
+To reproduce the gates on Windows with Python 3.14 after installing dependencies:
+
+```powershell
+cd "Linux_MacOs_Windows support"
+python -m coverage erase
+python -m coverage run -m pytest
+python -m coverage json -o reports/coverage.json
+python ..\scripts\check_coverage.py python reports\coverage.json
+cd "..\npm package"
+npm run coverage
+python ..\scripts\check_coverage.py node reports\coverage\coverage-summary.json
+cd "..\mobile development support"
+.\gradlew.bat :android:createDebugUnitTestCoverageReport
+python ..\scripts\check_coverage.py android android\build\reports\coverage\test\debug\report.xml
+```
+
+The Android command requires JDK 17 and Android SDK 35. CI retains its existing
+OS/version matrix and uploads coverage and test diagnostics on failure.
+
 ## Test performance and failure reports
 
 - Keep tests isolated and deterministic. Use `tmp_path` for files and small in-memory
